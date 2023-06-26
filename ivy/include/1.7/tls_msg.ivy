@@ -27,13 +27,13 @@ module tls_lower_intf(cid,bytes) = {
 # This module defines the interface of a TLS endpoint (either a client
 # or a server. The parameters are:
 #
-# `cid` : the type of connection identifiers
-# `bytes` : the type of byte arrays
-# `lower` : the interface to the underlying transport
-# `extens` : the type of lists of extensions
-# `exten_ser` : serializer for extensions
+# `cid`:the type of connection identifiers
+# `bytes`:the type of byte arrays
+# `lower`:the interface to the underlying transport
+# `extens`:the type of lists of extensions
+# `exten_ser`:serializer for extensions
 
-module tls_intf(cid,index,bytes,lower,extens,exten_ser,seq_num) = {
+module tls_intf(cid,index,bytes,lower,extens,hextens,exten_ser,seq_num) = {
 
     # The upper interface is between TLS and the application
 
@@ -70,7 +70,44 @@ module tls_intf(cid,index,bytes,lower,extens,exten_ser,seq_num) = {
     
     # Create a new connection with a fresh cid, and list of extensions
 
-    action create(c:cid, is_server : bool, e : extens)
+    action create(c:cid, is_server:bool, e:extens)
+
+    action create_0rtt_client(c:cid, is_server:bool, e:extens)
+
+    action create_0rtt(c:cid, is_server:bool, e:extens, he:hextens)
+
+    action get_old_retry_token returns (b:stream_data)
+
+    action save_token(token:stream_data)
+    
+    action save_initial_max_stream_data_uni(i:stream_pos)
+
+    action save_initial_max_stream_data_bidi_remote(i:stream_pos)
+
+    action save_initial_max_data(i:stream_pos)
+
+    action save_initial_max_stream_data_bidi_local(i:stream_pos)
+
+    action save_initial_max_stream_id_bidi(i:stream_id)
+
+    action save_active_connection_id_limit(i:stream_pos)
+    
+    action get_initial_max_stream_data_uni returns(i:stream_pos)
+
+    action get_initial_max_stream_data_bidi_remote returns(i:stream_pos)
+
+    action get_initial_max_data returns(i:stream_pos)
+
+    action get_initial_max_stream_data_bidi_local returns(i:stream_pos)
+
+    action get_initial_max_stream_id_bidi returns(i:stream_id)
+
+    action get_active_connection_id_limit returns(i:stream_pos)
+
+
+    #action create_no_hs(c:cid, is_server:bool, e:extens)
+
+    action get_old_new_token returns (b:stream_data)
 
     # Destroy an existing connection
 
@@ -97,14 +134,23 @@ module tls_intf(cid,index,bytes,lower,extens,exten_ser,seq_num) = {
 
     action decrypt_cipher(c:cid,l:level,cipher:bytes,iv:bytes) returns (clear:bytes)
     
+
+    action compute_retry_integrity_tag(odcil: stream_pos, odcid: cid,
+                                       pversion: version,
+                                       dcil: stream_pos, dcid: cid,
+                                       scil: stream_pos, scid: cid,
+                                       token:stream_data,
+                                       seq:seq_num,h:stream_pos,is_recv:bool) returns (cipher:bytes)
+
     # Encrypt data with AEAD for given level, additional data `ad` and
     # sequence number `seq`.
 
     action encrypt_aead(c:cid,l:level,clear:bytes,seq:seq_num,ad:bytes) returns (cipher:bytes)
     
     type decrypt_result = struct {
-        ok : bool,
-        data : bytes
+        ok:bool,
+        data:bytes,
+        payload:bytes
     }
 
     # Decrypt data with cipher for given level, additional data `ad`
@@ -116,49 +162,48 @@ module tls_intf(cid,index,bytes,lower,extens,exten_ser,seq_num) = {
     
     specification {
 
-	relation open(C:cid)
-	relation established(C:cid)
-	
-	after init {
-	    open(C) := false;
-	    established(C) := false;
-	}
+        relation open(C:cid)
+        relation established(C:cid)
+        
+        after init {
+            open(C) := false;
+            established(C) := false;
+        }
 
-	around create {
-	    require ~open(c);
-	    ...
-	    open(c) := true;
-	}
+        around create {
+            require ~open(c);
+            ...
+            open(c) := true;
+        }
 
-	around destroy {
-	    require open(c);
-	    ...
-	    open(c) := false;
-	    established(c) := false;
-	}
+        around destroy {
+            require open(c);
+            ...
+            open(c) := false;
+            established(c) := false;
+        }
 
-	before recv {
-	    require open(c);
-	}
+        before recv {
+            require open(c);
+        }
 
-	before send {
-	    require open(c) & established(c);
-	}
+        before send {
+            require open(c) & established(c);
+        }
 
-	before session_established {
-	    require open(c) & ~established(c);
-	    established(c) := true
-	}
+        before session_established {
+            require open(c) & ~established(c);
+            established(c) := true
+        }
 
-	before key_material_export {
-	    require open(c) & established(c);
-	}
+        before key_material_export {
+            require open(c) & established(c);
+        }
 
-	invariant established(C) -> open(C)
+        invariant established(C) -> open(C)
     }
     
-    instance foo : tls_gnutls(cid,index,bytes,extens,exten_ser,lower,this)
-
+    instance foo:tls_gnutls(cid,index,bytes,extens,hextens,exten_ser,lower,this)
 
 }
 
