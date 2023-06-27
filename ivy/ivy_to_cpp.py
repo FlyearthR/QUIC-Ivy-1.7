@@ -1963,6 +1963,11 @@ def module_to_cpp_class(classname,basename):
     header.append("extern std::ofstream __ivy_out;\n")
     header.append("void __ivy_exit(int);\n")
     
+    #chris
+    header.append("#include <inttypes.h>\n")
+    header.append("typedef __int128_t int128_t;\n")
+    header.append("typedef __uint128_t uint128_t;\n")
+    
     declare_hash_thunk(header)
 
     once_memo = set()
@@ -3063,6 +3068,23 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                         close_loop(impl,[v])
                 code_line(impl,"res.close_struct()")
                 close_scope(impl)
+                #chris
+                impl.append('template <>\n')
+                open_scope(impl,line='void  __ser<' + cfsname + '>(ivy_ser_128 &res, const ' + cfsname + '&t)')
+                code_line(impl,"res.open_struct()")
+                for idx,sym in enumerate(destrs):
+                    dom = sym.sort.dom[1:]
+                    vs = variables(dom)
+                    for d,v in zip(dom,vs):
+                        open_loop(impl,[v])
+                    code_line(impl,'res.open_field("'+memname(sym)+'")')
+                    code_line(impl,'__ser<' + ctype(sym.sort.rng,classname=classname) + '>(res,t.' + memname(sym) + subscripts(vs) + ')')
+                    code_line(impl,'res.close_field()')
+                    for d,v in zip(dom,vs):
+                        close_loop(impl,[v])
+                code_line(impl,"res.close_struct()")
+                close_scope(impl)
+
         global_classname = None
 
 
@@ -3078,6 +3100,11 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                 close_scope(impl)
                 impl.append('template <>\n')
                 open_scope(impl,line='void  __ser<' + cfsname + '>(ivy_ser &res, const ' + cfsname + '&t)')
+                code_line(impl,'__ser(res,(int)t)')
+                close_scope(impl)
+                #chris
+                impl.append('template <>\n')
+                open_scope(impl,line='void  __ser<' + cfsname + '>(ivy_ser_128 &res, const ' + cfsname + '&t)')
                 code_line(impl,'__ser(res,(int)t)')
                 close_scope(impl)
 
@@ -3152,6 +3179,25 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                         code_line(impl,'inp.close_field()')
                     code_line(impl,"inp.close_struct()")
                     close_scope(impl)
+                    #chris
+                    impl.append('template <>\n')
+                    open_scope(impl,line='void __deser<' + cfsname + '>(ivy_deser_128 &inp, ' + cfsname + ' &res)')
+                    code_line(impl,"inp.open_struct()")
+                    for idx,sym in enumerate(destrs):
+                        fname = memname(sym)
+                        vs = variables(sym.sort.dom[1:])
+                        code_line(impl,'inp.open_field("'+fname+'")')
+                        for v in vs:
+                            card = sort_card(v.sort)
+                            code_line(impl,'inp.open_list('+str(card)+')')
+                            open_loop(impl,[v])
+                        code_line(impl,'__deser(inp,res.'+fname+''.join('[{}]'.format(varname(v)) for v in vs) + ')')
+                        for v in vs:
+                            close_loop(impl,[v])
+                            code_line(impl,'inp.close_list()')
+                        code_line(impl,'inp.close_field()')
+                    code_line(impl,"inp.close_struct()")
+                    close_scope(impl)
                 if target.get() in ["gen","test"]:
                     impl.append('template <>\n')
                     open_scope(impl,line='void  __from_solver<' + cfsname + '>( gen &g, const  z3::expr &v,' + cfsname + ' &res)')
@@ -3218,6 +3264,13 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                     close_scope(impl)
                     impl.append('template <>\n')
                     open_scope(impl,line='void __deser<' + cfsname + '>(ivy_deser &inp, ' + cfsname + ' &res)')
+                    code_line(impl,'int __res')
+                    code_line(impl,'__deser(inp,__res)')
+                    code_line(impl,'res = ({})__res'.format(cfsname))
+                    close_scope(impl)
+                    #chris
+                    impl.append('template <>\n')
+                    open_scope(impl,line='void __deser<' + cfsname + '>(ivy_deser_128 &inp, ' + cfsname + ' &res)')
                     code_line(impl,'int __res')
                     code_line(impl,'__deser(inp,__res)')
                     code_line(impl,'res = ({})__res'.format(cfsname))

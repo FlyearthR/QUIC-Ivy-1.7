@@ -43,9 +43,6 @@ module array(domain,range) = {
     # add one element to the array
     action append(a:t,v:range) returns (a:t)
 
-    # test equality of two arrays
-    action eq(x:t,y:t) returns (res:bool)
-
     # extend an array by another arrary (i.e., concatenate the arrays)
     action extend(a:t,b:t) returns (a:t)
 
@@ -125,10 +122,6 @@ module array(domain,range) = {
 	    assert value(a,end(old a)) = v
 	}
 
-        after eq {
-            ensure res <-> (end(x) = end(y) & forall I. 0 <= I & I < end(x) -> value(x,I) = value(y,I))
-        }
-
         theorem extensionality = {
             property end(X) = end(Y) & forall I. 0 <= I & I < end(X) -> value(X,I) = value(Y,I)
             property X:t = Y
@@ -173,25 +166,6 @@ module vector(range) = {
 #
 
 autoinstance vector[range] : vector(range)
-
-
-################################################################################
-#
-# A bounded vector of size max can hold up to max-1 elements. 
-#
-
-module vector_bounded(range,max) = {
-    
-    type domain = {0..max}
-    
-    instantiate array(domain,range)
-
-    specification {
-        before append(a:t,v:range) {
-            assume a.end < max;
-        }
-    }
-}
 
 
 ################################################################################
@@ -295,12 +269,12 @@ module rel_array(domain,range) = {
 	}
 	after resize {
 	    assert end(a) = s;
-	    assert 0 <= X & X < end(old a) -> (value_is(a,X,Y) <-> value_is(old a,X,Y));
-	    assert end(old a) <= X & X < s -> (value_is(a,X,Y) <-> Y = v)
+	    assert 0 <= X & X < end(old a) -> value_is(a,X,Y) <-> value_is(old a,X,Y);
+	    assert end(old a) <= X & X < s -> value_is(a,X,Y) <-> Y = v
 	}
 	after append {
 	    assert end(a) > end(old a) & ~(end(old a) < X & X < end(a));
-	    assert 0 <= X & X < end(old a) -> (value_is(a,X,Y) <-> value_is(old a,X,Y));
+	    assert 0 <= X & X < end(old a) -> value_is(a,X,Y) <-> value_is(old a,X,Y);
 	    assert value_is(a,end(old a),Y) <-> Y = v
 	}
 
@@ -312,7 +286,7 @@ module rel_array(domain,range) = {
 
     instantiate array_impl
 
-    object impl = {...
+    implementation {
 	definition value_is(A,X,V) = (value(A,X) = V)
     }
 
@@ -400,6 +374,27 @@ module null_type(range_t,null_value) = {
 
 	template <>
 	void __deser<`t`>(ivy_deser &inp, `t` &res){
+	    long long val;
+	    inp.get(val);
+	    res.is_null = (val == (long long)strtoull("`null_value`",NULL,0));
+	    std::vector<ivy_value> args;
+	    args.resize(1);
+	    std::ostringstream sts;
+	    sts << val;
+	    args[0].atom = sts.str();
+	    res.contents = _arg<`range_t`>(args,0,0);	    
+        }
+
+	template <>
+	void  __ser<`t`>(ivy_ser_128 &res, const `t` &t){
+	    if (t.is_null)
+	        res.set((long long)strtoull("`null_value`",NULL,0));
+	    else
+	        __ser(res,t.contents);
+	}
+
+	template <>
+	void __deser<`t`>(ivy_deser_128 &inp, `t` &res){
 	    long long val;
 	    inp.get(val);
 	    res.is_null = (val == (long long)strtoull("`null_value`",NULL,0));
@@ -646,6 +641,29 @@ module path(domain,range) = {
 
 	    template <>
 	    void __ser<`t`>(ivy_ser &res, const `t` &inp) {
+	        int sz = inp.size();
+	        res.open_list(sz);
+	        for (unsigned i = 0; i < (unsigned)sz; i++) {
+		    res.open_list_elem();
+	            __ser(res,inp[i]);
+		    res.close_list_elem();
+                }
+	        res.close_list();
+	    }
+
+	    template <>
+	    void __deser<`t`>(ivy_deser_128 &inp, `t` &res) {
+	        inp.open_list();
+	        while(inp.open_list_elem()) {
+		    res.resize(res.size()+1);
+	            __deser(inp,res.back());
+		    inp.close_list_elem();
+                }
+		inp.close_list();
+	    }
+
+	    template <>
+	    void __ser<`t`>(ivy_ser_128 &res, const `t` &inp) {
 	        int sz = inp.size();
 	        res.open_list(sz);
 	        for (unsigned i = 0; i < (unsigned)sz; i++) {
@@ -1289,8 +1307,6 @@ module ordered_map_impl(key,value) = {
     instantiate map_wrapper(key,value)
 }
 
-autoinstance ordered_map[key][value] : ordered_map(key,value)
-
 ################################################################################
 #
 # Key/value arrays
@@ -1478,14 +1494,9 @@ module segment(domain,range,arr) = {
             {
                 seg.elems := seg.elems.append(data.value(idx));
                 idx := idx.next;
-            }
+            };
         }
     }
     
     isolate iso = this with domain.impl,arr
 }
-
-
-
-    
-    

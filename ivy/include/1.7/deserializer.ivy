@@ -30,7 +30,10 @@ module deserializer(index,bytes,datatype,deser) = {
             std::copy(x.begin()+pos,x.end(),buf.begin());
             `deser` ds(buf);
 
-            try {
+            try { 
+                std::cerr << x << std::endl;
+                std::cerr << pos << std::endl;
+                std::cerr << std::endl;
                __deser(ds,res.value);
                res.pos = pos + ds.pos;
             }
@@ -40,6 +43,7 @@ module deserializer(index,bytes,datatype,deser) = {
 
             catch(deser_err &err) {
                 std::cerr << "error: failed to deserialize data" << std::endl;
+                //std::cerr << err.what() << std::endl;
                 std::cerr << "hex dump of data follows." << std::endl;
                 for (unsigned i = 0; i < buf.size(); i++) {
                     if (i > 0 && i % 16 == 0) 
