@@ -385,6 +385,8 @@ def ctype_remaining_cases(sort,classname):
         return 'unsigned'
     if card <= 2**64:
        return 'unsigned long long'
+    if card <= 2**128:
+       return 'uint128_t'
     raise iu.IvyError(None,'sort {} is too large to represent with a machine integer'.format(sort))
 
 
@@ -1527,9 +1529,10 @@ def may_alias(x,y):
 
 def emit_param_decls(header,name,params,extra=[],classname=None,ptypes=None):
     header.append(funname(name) + '(')
-#    for p in params:
-#        if il.is_function_sort(p.sort):
-#            raise(iu.IvyError(None,'Cannot compile parameter {} with function sort'.format(p)))
+    # CHRIS
+    for p in params:
+       if il.is_function_sort(p.sort):
+           raise(iu.IvyError(None,'Cannot compile parameter {} with function sort'.format(p)))
     header.append(', '.join(extra + [sym_decl(p) if il.is_function_sort(p.sort) else (ctype(p.sort,classname=classname,ptype = ptypes[idx] if ptypes else None) + ' ' + varname(p.name)) for idx,p in enumerate(params)]))
     header.append(')')
 
@@ -1644,7 +1647,7 @@ def emit_initial_action(header,impl,classname):
         close_loop(impl,action.formal_params)
     close_scope(impl)
     
-int_ctypes = ["bool","int","long long","unsigned","unsigned long long"]
+int_ctypes = ["bool","int","long long","unsigned","unsigned long long","int128_t","uint128_t"]
 
 def is_iterable_sort(sort):
     return ctype(sort) in int_ctypes
@@ -2414,9 +2417,171 @@ struct ivy_socket_deser : public ivy_binary_deser {
         while (inp.size() < pos + bytes) {
             int oldsize = inp.size();
             int get = pos + bytes - oldsize;
+            get = (get < 1024) ? 1024 : get;
 """
-+ ("            get = (get < 1024) ? 1024 : get;" if target.get() not in ["gen","test"] else "") +
++ #+ ("            get = (get < 1024) ? 1024 : get;" if target.get() not in ["gen","test"] else "") +
 """
+            inp.resize(oldsize + get);
+            int newbytes;
+	    if ((newbytes = read(sock,&inp[oldsize],get)) < 0)
+		 { std::cerr << "recvfrom failed\\n"; exit(1); }
+            inp.resize(oldsize + newbytes);
+            if (newbytes == 0)
+                 return false;
+        }
+        return true;
+    }
+    virtual bool can_end() {return true;}
+};
+
+struct ivy_ser_128 {
+    virtual void  set(int128_t) = 0;
+    virtual void  set(bool) = 0;
+    virtual void  setn(int128_t inp, int len) = 0;
+    virtual void  set(const std::string &) = 0;
+    virtual void  open_list(int len) = 0;
+    virtual void  close_list() = 0;
+    virtual void  open_list_elem() = 0;
+    virtual void  close_list_elem() = 0;
+    virtual void  open_struct() = 0;
+    virtual void  close_struct() = 0;
+    virtual void  open_field(const std::string &) = 0;
+    virtual void  close_field() = 0;
+    virtual void  open_tag(int, const std::string &) {
+	std::cout << "ivy_ser_128 open_tag deser_err\\n"; 
+	throw deser_err();
+    }
+    virtual void  close_tag() {}
+    virtual ~ivy_ser_128(){}
+};
+
+struct ivy_binary_ser_128 : public ivy_ser_128 {
+    std::vector<char> res;
+    void setn(int128_t inp, int len) {
+        for (int i = len-1; i >= 0 ; i--)
+            res.push_back((inp>>(8*i))&0xff); //16 ? no
+    }
+    void set(int128_t inp) {
+        setn(inp,sizeof(int128_t));
+    }
+    void set(bool inp) {
+        set((int128_t)inp);
+    }
+    void set(const std::string &inp) {
+        for (unsigned i = 0; i < inp.size(); i++)
+            res.push_back(inp[i]);
+        res.push_back(0);
+    }
+    void open_list(int len) {
+        set((int128_t)len);
+    }
+    void close_list() {}
+    void open_list_elem() {}
+    void close_list_elem() {}
+    void open_struct() {}
+    void close_struct() {}
+    virtual void  open_field(const std::string &) {}
+    void close_field() {}
+    virtual void  open_tag(int tag, const std::string &) {
+        set((int128_t)tag);
+    }
+    virtual void  close_tag() {}
+};
+
+struct ivy_deser_128 {
+    virtual void  get(int128_t&) = 0;
+    virtual void  get(std::string &) = 0;
+    virtual void  getn(int128_t &res, int bytes) = 0;
+    virtual void  open_list() = 0;
+    virtual void  close_list() = 0;
+    virtual bool  open_list_elem() = 0;
+    virtual void  close_list_elem() = 0;
+    virtual void  open_struct() = 0;
+    virtual void  close_struct() = 0;
+    virtual void  open_field(const std::string &) = 0;
+    virtual void  close_field() = 0;
+    virtual int   open_tag(const std::vector<std::string> &) {
+	    std::cout << "ivy_deser_128 open_tag deser_err\\n"; 
+	    throw deser_err();
+    }
+    virtual void  close_tag() {}
+    virtual void  end() = 0;
+    virtual ~ivy_deser_128(){}
+};
+
+struct ivy_binary_deser_128 : public ivy_deser_128 {
+    std::vector<char> inp;
+    int pos;
+    std::vector<int> lenstack;
+    ivy_binary_deser_128(const std::vector<char> &inp) : inp(inp),pos(0) {}
+    virtual bool more(unsigned bytes) {return inp.size() >= pos + bytes;}
+    virtual bool can_end() {return pos == inp.size();}
+    void get(int128_t &res) {
+       getn(res,16);
+    }
+    void getn(int128_t &res, int bytes) {
+        if (!more(bytes)) {
+	    std::cout << "ivy_binary_deser_128 getn deser_err\\n"; 
+            throw deser_err();
+        } res = 0;
+        for (int i = 0; i < bytes; i++)
+            res = (res << 8) | (((int128_t)inp[pos++]) & 0xff);
+    }
+    void get(std::string &res) {
+        while (more(1) && inp[pos]) {
+//            if (inp[pos] == '\"')
+//                throw deser_err();
+            res.push_back(inp[pos++]);
+        }
+        if(!(more(1) && inp[pos] == 0)) {
+	    std::cout << "ivy_binary_deser_128 get deser_err\\n"; 
+            throw deser_err();
+        } pos++;
+    }
+    void open_list() {
+        int128_t len;
+        get(len);
+        lenstack.push_back(len);
+    }
+    void close_list() {
+        lenstack.pop_back();
+    }
+    bool open_list_elem() {
+        return lenstack.back();
+    }
+    void close_list_elem() {
+        lenstack.back()--;
+    }
+    void open_struct() {}
+    void close_struct() {}
+    virtual void  open_field(const std::string &) {}
+    void close_field() {}
+    int open_tag(const std::vector<std::string> &tags) {
+        int128_t res;
+        get(res);
+        if (res >= tags.size()) {
+	    std::cout << "ivy_binary_deser_128 open_tag deser_err\\n"; 
+            throw deser_err();
+        } return res;
+    }
+    void end() {
+        if (!can_end()) {
+	    std::cout << "ivy_binary_deser_128 end deser_err\\n"; 
+            throw deser_err();
+	}
+    }
+};
+
+struct ivy_socket_deser_128 : public ivy_binary_deser_128 {
+    int sock;
+    public:
+      ivy_socket_deser_128(int sock, const std::vector<char> &inp)
+          : ivy_binary_deser_128(inp), sock(sock) {}
+    virtual bool more(unsigned bytes) {
+        while (inp.size() < pos + bytes) {
+            int oldsize = inp.size();
+            int get = pos + bytes - oldsize;
+            get = (get < 1024) ? 1024 : get;
             inp.resize(oldsize + get);
             int newbytes;
 	    if ((newbytes = read(sock,&inp[oldsize],get)) < 0)
@@ -2538,6 +2703,12 @@ void __ser<unsigned long long>(ivy_ser &res, const unsigned long long &inp) {
 }
 
 template <>
+void __ser<int128_t>(ivy_ser &res, const int128_t &inp) {
+    res.set((long long)inp);
+}
+
+
+template <>
 void __ser<unsigned>(ivy_ser &res, const unsigned &inp) {
     res.set((long long)inp);
 }
@@ -2580,6 +2751,13 @@ void __deser<unsigned long long>(ivy_deser &inp, unsigned long long &res) {
 }
 
 template <>
+void __deser<int128_t>(ivy_deser &inp, int128_t &res) {
+    long long temp;
+    inp.get(temp);
+    res = temp;
+}
+
+template <>
 void __deser<unsigned>(ivy_deser &inp, unsigned &res) {
     long long temp;
     inp.get(temp);
@@ -2604,6 +2782,100 @@ void __deser(ivy_deser &inp, std::vector<bool>::reference res) {
     res = thing;
 }
 
+
+//we could probably merge that but we prefered to not modify too much initial
+//code
+
+template <class T> void __ser(ivy_ser_128 &res, const T &inp);
+
+template <>
+void __ser<int>(ivy_ser_128 &res, const int &inp) {
+    res.set((int128_t)inp);
+}
+
+template <>
+void __ser<long long>(ivy_ser_128 &res, const long long &inp) {
+    res.set((int128_t)inp);
+}
+
+template <>
+void __ser<int128_t>(ivy_ser_128 &res, const int128_t &inp) {
+    res.set(inp);
+}
+
+template <>
+void __ser<unsigned long long>(ivy_ser_128 &res, const unsigned long long &inp) {
+    res.set((int128_t)inp);
+}
+
+template <>
+void __ser<uint128_t>(ivy_ser_128 &res, const uint128_t &inp) {
+    res.set((int128_t)inp);
+}
+
+template <>
+void __ser<unsigned>(ivy_ser_128 &res, const unsigned &inp) {
+    res.set((int128_t)inp);
+}
+
+template <>
+void __ser<bool>(ivy_ser_128 &res, const bool &inp) {
+    res.set(inp);
+}
+
+template <>
+void __ser<__strlit>(ivy_ser_128 &res, const __strlit &inp) {
+    res.set(inp);
+}
+
+template <class T> void __deser(ivy_deser_128 &inp, T &res);
+
+template <>
+void __deser<int>(ivy_deser_128 &inp, int &res) {
+    int128_t temp;
+    inp.get(temp);
+    res = temp;
+}
+
+template <>
+void __deser<long long>(ivy_deser_128 &inp, long long &res) {
+    int128_t temp;
+    inp.get(temp);
+    res = temp;
+}
+
+template <>
+void __deser<int128_t>(ivy_deser_128 &inp, int128_t &res) {
+    inp.get(res);
+}
+
+
+template <>
+void __deser<unsigned long long>(ivy_deser_128 &inp, unsigned long long &res) {
+    int128_t temp;
+    inp.get(temp);
+    res = temp;
+}
+
+template <>
+void __deser<unsigned>(ivy_deser_128 &inp, unsigned &res) {
+    int128_t temp;
+    inp.get(temp);
+    res = temp;
+}
+
+template <>
+void __deser<__strlit>(ivy_deser_128 &inp, __strlit &res) {
+    inp.get(res);
+}
+
+template <>
+void __deser<bool>(ivy_deser_128 &inp, bool &res) {
+    int128_t thing;
+    inp.get(thing);
+    res = thing;
+}
+
 class gen;
 
 """)
@@ -2620,6 +2892,18 @@ template <>
 void __from_solver<long long>( gen &g, const  z3::expr &v, long long &res) {
     res = g.eval(v);
 }
+
+
+template <>
+void __from_solver<int128_t>( gen &g, const  z3::expr &v, int128_t &res) {
+    res = g.eval(v);
+}
+
+template <>
+void __from_solver<uint128_t>( gen &g, const  z3::expr &v, uint128_t &res) {
+    res = g.eval(v);
+}
+
 
 template <>
 void __from_solver<unsigned long long>( gen &g, const  z3::expr &v, unsigned long long &res) {
@@ -2657,6 +2941,16 @@ z3::expr __to_solver<int>( gen &g, const  z3::expr &v, int &val) {
 
 template <>
 z3::expr __to_solver<long long>( gen &g, const  z3::expr &v, long long &val) {
+    return v == g.int_to_z3(v.get_sort(),val);
+}
+
+template <>
+z3::expr __to_solver<int128_t>( gen &g, const  z3::expr &v, int128_t &val) {
+    return v == g.int_to_z3(v.get_sort(),val);
+}
+
+template <>
+z3::expr __to_solver<uint128_t>( gen &g, const  z3::expr &v, uint128_t &val) {
     return v == g.int_to_z3(v.get_sort(),val);
 }
 
@@ -2706,6 +3000,16 @@ void __randomize<int>( gen &g, const  z3::expr &v, const std::string &sort_name)
 
 template <>
 void __randomize<long long>( gen &g, const  z3::expr &v, const std::string &sort_name) {
+    g.randomize(v,sort_name);
+}
+
+template <>
+void __randomize<int128_t>( gen &g, const  z3::expr &v, const std::string &sort_name) {
+    g.randomize(v,sort_name);
+}
+
+template <>
+void __randomize<uint128_t>( gen &g, const  z3::expr &v, const std::string &sort_name) {
     g.randomize(v,sort_name);
 }
 
@@ -2798,6 +3102,10 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
             impl.append('void  __ser<' + cfsname + '>(ivy_ser &res, const ' + cfsname + '&);\n')
             impl.append('template <>\n')
             impl.append('void  __deser<' + cfsname + '>(ivy_deser &inp, ' + cfsname + ' &res);\n')                
+            impl.append('template <>\n')
+            impl.append('void  __ser<' + cfsname + '>(ivy_ser_128 &res, const ' + cfsname + '&);\n')
+            impl.append('template <>\n')
+            impl.append('void  __deser<' + cfsname + '>(ivy_deser_128 &inp, ' + cfsname + ' &res);\n')                          
         if target.get() in ["test","gen"]:
             impl.append('template <>\n')
             impl.append('void __from_solver<' + cfsname + '>( gen &g, const  z3::expr &v, ' + cfsname + ' &res);\n')
@@ -2818,6 +3126,11 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                 impl.append('void  __ser<' + cfsname + '>(ivy_ser &res, const ' + cfsname + '&);\n')
                 impl.append('template <>\n')
                 impl.append('void  __deser<' + cfsname + '>(ivy_deser &inp, ' + cfsname + ' &res);\n')                
+                impl.append('template <>\n')
+                impl.append('void  __ser<' + cfsname + '>(ivy_ser_128 &res, const ' + cfsname + '&);\n')
+                impl.append('template <>\n')
+                impl.append('void  __deser<' + cfsname + '>(ivy_deser_128 &inp, ' + cfsname + ' &res);\n')              
+    
 
     if target.get() in ["test","gen"]:
         for sort_name in sorted(im.module.sort_destructors):
@@ -2979,7 +3292,7 @@ z3::expr __z3_rename(const z3::expr &e, hash_map<std::string,std::string> &rn) {
                 once_memo.add(code)
                 header.append(code)
 
-
+ 
     ivy_cpp.context.globals.code.extend(header)
     ivy_cpp.context.members.code = []
     header = ivy_cpp.context.globals.code
@@ -3769,7 +4082,7 @@ def emit_app(self,header,code,capture_args=None):
         if self.func.name == 'cast':
             if len(self.args) == 1:
                 atype = ctypefull(self.args[0].sort)
-                if atype in ['int','long long','unsigned long long','unsigned']:
+                if atype in ['int','long long','unsigned long long','unsigned',"unint128_t","int128_t"]:
                     if isinstance(itp,il.RangeSort):
                         x = new_temp(header)
                         code_line(header,x + ' = ' + code_eval(header,self.args[0]))
@@ -4433,80 +4746,146 @@ def emit_assume(self,header):
 ia.AssumeAction.emit = emit_assume
 
 
-def emit_call(self,header,ignore_vars=False):
+# def emit_call(self,header,ignore_vars=False):
+#     # tricky: a call can have variables on the lhs. we lower this to
+#     # a call with temporary return actual followed by assignment
+#     # tricker: in a parameterized initializer, the rhs may also have variables.
+#     with ivy_ast.ASTContext(self):
+#     # we iterate over these.
+#         if not ignore_vars and len(self.args) == 2 and list(ilu.variables_ast(self.args[1])):
+#             vs = list(iu.unique(ilu.variables_ast(self.args[0])))
+#             sort = self.args[1].sort
+#             if vs:
+#                 sort = il.FunctionSort(*([v.sort for v in vs] + [sort]))
+#             sym = il.Symbol(new_temp(header,sort=sort),sort)
+#             lhs = sym(*vs) if vs else sym
+#             open_loop(header,vs)
+#             emit_call(self.clone([self.args[0],lhs]),header,ignore_vars=True)
+#             close_loop(header,vs)
+#             ac = ia.AssignAction(self.args[1],lhs)
+#             if hasattr(self,'lineno'):
+#                 ac.lineno = self.lineno
+#             emit_assign(ac,header)
+#             return
+#         if target.get() in ["gen","test"]:
+#             indent(header)
+#             header.append('___ivy_stack.push_back(' + str(self.unique_id) + ');\n')
+#         code = []
+#         indent(code)
+#         retvals = []
+#         args = list(self.args[0].args)
+#         nargs = len(args)
+#         name = self.args[0].rep
+#         action = im.module.actions[name]
+#         fmls = list(action.formal_params)
+#         if len(self.args) >= 2:
+#             pt,rt = get_param_types(name,action)
+#             for rpos in range(len(rt)):
+#                 rv = self.args[1 + rpos]
+#                 pos = rt[rpos].pos if isinstance(rt[rpos],ReturnRefType) else None
+#                 if pos is not None:
+#                     if pos < nargs:
+#                         iparg = self.args[0].args[pos]
+#                         if (iparg != rv or
+#                             any(j != pos and may_alias(arg,iparg) for j,arg in enumerate(self.args[0].args))):
+#                             retval = new_temp(header,rv.sort)
+#                             code.append(retval + ' = ')
+#                             self.args[0].args[pos].emit(header,code)
+#                             code.append('; ')
+#                             retvals.append((rv,retval))
+#                             args = [il.Symbol(retval,self.args[1].sort) if idx == pos else a for idx,a in enumerate(args)]
+#                     else:
+#                         args.append(self.args[1+rpos])
+#                         fmls.append(rv)
+#             if not isinstance(rt[0],ReturnRefType):
+#                 self.args[1].emit(header,code)
+#                 code.append(' = ')
+#         code.append(varname(str(self.args[0].rep)) + '(')
+#         first = True
+#         for p,fml in zip(args,fmls):
+#             if not first:
+#                 code.append(', ')
+#             lsort,rsort = fml.sort,p.sort
+#             if im.module.is_variant(lsort,rsort):
+#                 code.append(sort_to_cpptype[lsort].upcast(im.module.variant_index(lsort,rsort),code_eval(header,p)))
+#             else:
+#                 p.emit(header,code)
+#             first = False
+#         code.append(');\n')    
+#         for (rv,retval) in retvals:
+#             indent(code) 
+#             rv.emit(header,code)
+#             code.append(' = ' + retval + ';\n')
+#         header.extend(code)
+#         if target.get() in ["gen","test"]:
+#             indent(header)
+#             header.append('___ivy_stack.pop_back();\n')
+
+def emit_call(self,header):
     # tricky: a call can have variables on the lhs. we lower this to
-    # a call with temporary return actual followed by assignment
-    # tricker: in a parameterized initializer, the rhs may also have variables.
-    with ivy_ast.ASTContext(self):
-    # we iterate over these.
-        if not ignore_vars and len(self.args) == 2 and list(ilu.variables_ast(self.args[1])):
-            vs = list(iu.unique(ilu.variables_ast(self.args[0])))
-            sort = self.args[1].sort
-            if vs:
-                sort = il.FunctionSort(*([v.sort for v in vs] + [sort]))
-            sym = il.Symbol(new_temp(header,sort=sort),sort)
-            lhs = sym(*vs) if vs else sym
-            open_loop(header,vs)
-            emit_call(self.clone([self.args[0],lhs]),header,ignore_vars=True)
-            close_loop(header,vs)
-            ac = ia.AssignAction(self.args[1],lhs)
-            if hasattr(self,'lineno'):
-                ac.lineno = self.lineno
-            emit_assign(ac,header)
-            return
-        if target.get() in ["gen","test"]:
-            indent(header)
-            header.append('___ivy_stack.push_back(' + str(self.unique_id) + ');\n')
-        code = []
-        indent(code)
-        retvals = []
-        args = list(self.args[0].args)
-        nargs = len(args)
-        name = self.args[0].rep
-        action = im.module.actions[name]
-        fmls = list(action.formal_params)
-        if len(self.args) >= 2:
-            pt,rt = get_param_types(name,action)
-            for rpos in range(len(rt)):
-                rv = self.args[1 + rpos]
-                pos = rt[rpos].pos if isinstance(rt[rpos],ReturnRefType) else None
-                if pos is not None:
-                    if pos < nargs:
-                        iparg = self.args[0].args[pos]
-                        if (iparg != rv or
-                            any(j != pos and may_alias(arg,iparg) for j,arg in enumerate(self.args[0].args))):
-                            retval = new_temp(header,rv.sort)
-                            code.append(retval + ' = ')
-                            self.args[0].args[pos].emit(header,code)
-                            code.append('; ')
-                            retvals.append((rv,retval))
-                            args = [il.Symbol(retval,self.args[1].sort) if idx == pos else a for idx,a in enumerate(args)]
-                    else:
-                        args.append(self.args[1+rpos])
-                        fmls.append(rv)
-            if not isinstance(rt[0],ReturnRefType):
-                self.args[1].emit(header,code)
-                code.append(' = ')
-        code.append(varname(str(self.args[0].rep)) + '(')
-        first = True
-        for p,fml in zip(args,fmls):
-            if not first:
-                code.append(', ')
-            lsort,rsort = fml.sort,p.sort
-            if im.module.is_variant(lsort,rsort):
-                code.append(sort_to_cpptype[lsort].upcast(im.module.variant_index(lsort,rsort),code_eval(header,p)))
-            else:
-                p.emit(header,code)
-            first = False
-        code.append(');\n')    
-        for (rv,retval) in retvals:
-            indent(code) 
-            rv.emit(header,code)
-            code.append(' = ' + retval + ';\n')
-        header.extend(code)
-        if target.get() in ["gen","test"]:
-            indent(header)
-            header.append('___ivy_stack.pop_back();\n')
+    # a call with temporary return actual followed by assignment 
+    if len(self.args) == 2 and list(ilu.variables_ast(self.args[1])):
+        sort = self.args[1].sort
+        sym = il.Symbol(new_temp(header,sort=sort),sort)
+        emit_call(self.clone([self.args[0],sym]),header)
+        ac = ia.AssignAction(self.args[1],sym)
+        if hasattr(self,'lineno'):
+            ac.lineno = self.lineno
+        emit_assign(ac,header)
+        return
+    if target.get() in ["gen","test"]:
+        indent(header)
+        header.append('___ivy_stack.push_back(' + str(self.unique_id) + ');\n')
+    code = []
+    indent(code)
+    retvals = []
+    args = list(self.args[0].args)
+    nargs = len(args)
+    name = self.args[0].rep
+    action = im.module.actions[name]
+    fmls = list(action.formal_params)
+    if len(self.args) >= 2:
+        pt,rt = get_param_types(name,action)
+        for rpos in range(len(rt)):
+            rv = self.args[1 + rpos]
+            pos = rt[rpos].pos if isinstance(rt[rpos],ReturnRefType) else None
+            if pos is not None:
+                if pos < nargs:
+                    iparg = self.args[0].args[pos]
+                    if (iparg != rv or
+                        any(j != pos and may_alias(arg,iparg) for j,arg in enumerate(self.args[0].args))):
+                        retval = new_temp(header,rv.sort)
+                        code.append(retval + ' = ')
+                        self.args[0].args[pos].emit(header,code)
+                        code.append('; ')
+                        retvals.append((rv,retval))
+                        args = [il.Symbol(retval,self.args[1].sort) if idx == pos else a for idx,a in enumerate(args)]
+                else:
+                    args.append(self.args[1+rpos])
+                    fmls.append(rv)
+        if not isinstance(rt[0],ReturnRefType):
+            self.args[1].emit(header,code)
+            code.append(' = ')
+    code.append(varname(str(self.args[0].rep)) + '(')
+    first = True
+    for p,fml in zip(args,fmls):
+        if not first:
+            code.append(', ')
+        lsort,rsort = fml.sort,p.sort
+        if im.module.is_variant(lsort,rsort):
+            code.append(sort_to_cpptype[lsort].upcast(im.module.variant_index(lsort,rsort),code_eval(header,p)))
+        else:
+            p.emit(header,code)
+        first = False
+    code.append(');\n')    
+    for (rv,retval) in retvals:
+        indent(code) 
+        rv.emit(header,code)
+        code.append(' = ' + retval + ';\n')
+    header.extend(code)
+    if target.get() in ["gen","test"]:
+        indent(header)
+        header.append('___ivy_stack.pop_back();\n')
 
 ia.CallAction.emit = emit_call
 
@@ -4725,16 +5104,105 @@ int ask_ret(long long bound) {
 
     virtual void ivy_assert(bool truth,const char *msg){
         if (!truth) {
-            __ivy_out << "assertion_failed(\\"" << msg << "\\")" << std::endl;
-            std::cerr << msg << ": error: assertion failed\\n";
+            int i;
+            __ivy_out << "assertion_failed(\\"" << msg << "\\")\\n";
+
+            std::string::size_type pos = std::string(msg).find(".ivy");
+            std::string path = "";
+            if (pos != std::string::npos)
+                path = std::string(msg+0,msg+pos);
+
+            std::string lineNumber = "1";
+            std::string::size_type pos_n = std::string(msg).find("line");
+            if (pos_n != std::string::npos)
+                    lineNumber = std::string(msg+pos_n,msg+std::string(msg).length());
+            int num;
+            sscanf(lineNumber.c_str(),"%*[^0-9]%d", &num);
+            lineNumber = std::to_string(num);
+
+            std::string mode = "";
+            if(const char* env_p2 = std::getenv("TEST_TYPE")) { 
+                mode = std::string(env_p2);
+            }
+            
+            std::string command = "";
+            if(path.find("test") != std::string::npos) 
+		    path = std::string("$PROOTPATH/QUIC-Ivy-Attacker/doc/examples/quic/quic_tests/") + mode + std::string("_tests/") + path;
+        
+            command = std::string("/bin/sed \'") + lineNumber + std::string("!d\' ")  + path + std::string(".ivy > temps.txt");
+            //std::cerr << command.c_str() << "\\n";
+
+            if (system(NULL)) i=system(command.c_str());
+            else exit (EXIT_FAILURE);
+
+	        std::ifstream ifs("temps.txt"); //.rdbuf()
+	        std::stringstream strStream;
+	        strStream << ifs.rdbuf();
+	        std::string str = strStream.str();
+            str.erase(std::remove(str.begin(), str.end(), \'\\n\'), str.end());
+            str.erase(std::remove(str.begin(), str.end(), \'\\t\'), str.end());
+            const std::size_t pos_str = str.find_first_not_of(' ');
+            if (pos_str != std::string::npos)
+                str.erase(0, pos_str);
+            std::cerr << str << "\\n";
+	        if(std::remove("temps.txt") != 0) 
+		        std::cerr << "error: remove(temps.txt) failed\\n";
+	        std::cerr << msg << ": error: assertion failed\\n";
+            __ivy_out << "assertion_failed(" << str << ")\\n";
             CLOSE_TRACE
             __ivy_exit(1);
         }
     }
+
+    #include <string>
+
     virtual void ivy_assume(bool truth,const char *msg){
         if (!truth) {
-            __ivy_out << "assumption_failed(\\"" << msg << "\\")" << std::endl;
-            std::cerr << msg << ": error: assumption failed\\n";
+            int i;
+            __ivy_out << "assumption_failed(\\"" << msg << "\\")\\n";
+            
+            std::string::size_type pos = std::string(msg).find(".ivy");
+            std::string path = "";
+            if (pos != std::string::npos)
+                path = std::string(msg+0,msg+pos);
+            
+            std::string lineNumber = "1";
+            std::string::size_type pos_n = std::string(msg).find("line");
+            if (pos_n != std::string::npos)
+                lineNumber = std::string(msg+pos_n,msg+std::string(msg).length());
+            int num;
+            sscanf(lineNumber.c_str(),"%*[^0-9]%d", &num);
+            lineNumber = std::to_string(num);
+            
+            std::string mode = "";
+            if(const char* env_p2 = std::getenv("TEST_TYPE")) { 
+                mode = std::string(env_p2);
+            }
+            
+            std::string command = "";
+            if(path.find("test") != std::string::npos) 
+		    path = std::string("$PROOTPATH/QUIC-Ivy-Attacker/doc/examples/quic/quic_tests/") + mode + std::string("_tests/") + path;
+        
+            command = std::string("/bin/sed \'") + lineNumber + std::string("!d\' ")  + path + std::string(".ivy > temps.txt");
+            //std::cerr << command.c_str() << "\\n";
+
+            if (system(NULL)) i=system(command.c_str());
+            else exit (EXIT_FAILURE);
+
+	        std::ifstream ifs("temps.txt"); //.rdbuf()
+	        std::stringstream strStream;
+	        strStream << ifs.rdbuf();
+	        std::string str = strStream.str();
+            str.erase(std::remove(str.begin(), str.end(), \'\\n\'), str.end());
+            str.erase(std::remove(str.begin(), str.end(), \'\\t\'), str.end());
+            const std::size_t pos_str = str.find_first_not_of(' ');
+            if (pos_str != std::string::npos)
+                str.erase(0, pos_str);
+            std::cerr << str << "\\n";
+	        if(std::remove("temps.txt") != 0) 
+		        std::cerr << "error: remove(temps.txt) failed\\n";
+	        std::cerr << msg << ": error: assumption failed\\n";
+            __ivy_out << "assumption_failed(" << str << ")\\n";
             CLOSE_TRACE
             __ivy_exit(1);
         }
@@ -5189,6 +5657,9 @@ def emit_repl_boilerplate3test(header,impl,classname):
         int timer_min = 15;
 #else
         int timer_min = 5;
+        if(const char* env_p2 = std::getenv("TIMEOUT_IVY")) { 
+            timer_min = std::stoi(std::string(env_p2));
+        }
 #endif
 
         struct timeval timeout;
@@ -5389,7 +5860,7 @@ public:
             throw e;
         }
     }
-
+    // TODO add int128_t CHRIS
     long long eval_apply(const char *decl_name, unsigned num_args, const int *args) {
         z3::expr apply_expr = mk_apply_expr(decl_name,num_args,args);
         //        std::cout << "apply_expr: " << apply_expr << std::endl;
@@ -5853,25 +6324,43 @@ def main_int(is_ivyc):
             iso.set_interpret_all_sorts(True)
 
         isolate = ic.isolate.get()
-
+# In current version
+        # if is_ivyc:
+        #     if isolate != None:
+        #         isolates = [isolate]
+        #     else:
+        #         if target.get() == 'test':
+        #             isolates = ['this'] # CHRIS : ERROR here, should be old version
+        #         else:
+        #             extracts = list((x,y) for x,y in im.module.isolates.iteritems()
+        #                             if isinstance(y,ivy_ast.ExtractDef))
+        #             if len(extracts) == 0:
+        #                 isol = ivy_ast.ExtractDef(ivy_ast.Atom('extract'),ivy_ast.Atom('this'))
+        #                 isol.with_args = 1
+        #                 im.module.isolates['extract'] = isol
+        #                 isolates = ['extract']
+        #             else:
+        #                 isolates = [ex[0] for ex in extracts]
+        #             print extracts
+        #         print isolates
+#                    elif len(extracts) == 1:
+#                        isolates = [extracts[0][0]]
+# Old version 
         if is_ivyc:
             if isolate != None:
                 isolates = [isolate]
             else:
-                if target.get() == 'test':
-                    isolates = ['this']
-                else:
-                    extracts = list((x,y) for x,y in im.module.isolates.iteritems()
-                                    if isinstance(y,ivy_ast.ExtractDef))
-                    if len(extracts) == 0:
-                        isol = ivy_ast.ExtractDef(ivy_ast.Atom('extract'),ivy_ast.Atom('this'))
-                        isol.with_args = 1
-                        im.module.isolates['extract'] = isol
-                        isolates = ['extract']
-                    else:
-                        isolates = [ex[0] for ex in extracts]
-#                    elif len(extracts) == 1:
-#                        isolates = [extracts[0][0]]
+                extracts = list((x,y) for x,y in im.module.isolates.iteritems()
+                                if isinstance(y,ivy_ast.ExtractDef))
+                if len(extracts) == 0:
+                    isol = ivy_ast.ExtractDef(ivy_ast.Atom('extract'),ivy_ast.Atom('this'))
+                    isol.with_args = 1
+                    im.module.isolates['extract'] = isol
+                    isolates = ['extract']
+                elif len(extracts) == 1:
+                    isolates = [extracts[0][0]]
+                print isolates
+                print extracts
         else:
             if isolate != None:
                 isolates = [isolate]
@@ -5915,9 +6404,9 @@ def main_int(is_ivyc):
                             the_iso.with_args = len(the_iso.args)
                             im.module.isolates[isolate] = the_iso
                         
-                    iso.compile_with_invariants.set("true" if target.get()=='test'
-                                                    and not iu.version_le(iu.get_string_version(),"1.7")
-                                                    else "false")
+                    # iso.compile_with_invariants.set("true" if target.get()=='test'
+                    #                                 and not iu.version_le(iu.get_string_version(),"1.7")
+                    #                                 else "false")
 
                     iso.create_isolate(isolate) # ,ext='ext'
 
@@ -5964,7 +6453,7 @@ def main_int(is_ivyc):
                     else:
                         libs = []    
                     cpp11 = any((x == 'cppstd' or x.endswith('.cppstd')) and y.rep=='cpp11' for x,y in im.module.attributes.iteritems())
-                    gpp11_spec = ' -std=c++11 ' if cpp11 else ' -std=c++11 ' 
+                    gpp11_spec = ' -std=c++11 ' if cpp11 else '-std=c++11 ' #' ' # -std=c++11 ' 
                     libspec = ''
                     for x,y in im.module.attributes.iteritems():
                         p,c = iu.parent_child_name(x)
@@ -6009,15 +6498,15 @@ def main_int(is_ivyc):
                         if opt_outdir.get():
                             cmd = 'cd {} & '.format(opt_outdir.get()) + cmd
                     else:
-                        if target.get() in ['gen','test']:
+                        if target.get() in ['gen','test']: # -Wl,
                             paths = ' '.join('-I {} -L {} -Xlinker -rpath -Xlinker {}'.format(os.path.join(_dir,'include'),os.path.join(_dir,'lib'),os.path.join(_dir,'lib')) for _dir in get_lib_dirs())
                         else:
                             paths = ''
                         for lib in libs:
-                            _dir = lib[1]
+                            _dir = lib[1] # -Wl,
                             _libdir = lib[2] if len(lib) >= 3 else (_dir  + '/lib')
-                            paths += ' -I {}/include -L {} -Xlinker -rpath -Xlinker {}'.format(_dir,_libdir,_libdir)
-                        if emit_main:
+                            paths += ' -I {}/include -L {} -Xlinker -rpath -Xlinker {}'.format(_dir,_libdir, _libdir)
+                        if emit_main: #  -Wno-return-type
                             cmd = "g++ -Wno-parentheses-equality {} {} -g -o {} {}.cpp".format(gpp11_spec,paths,basename,basename)
                         else:
                             cmd = "g++ -Wno-parentheses-equality {} {} -g -c {}.cpp".format(gpp11_spec,paths,basename)
@@ -6025,7 +6514,43 @@ def main_int(is_ivyc):
                             cmd = cmd + ' -lz3'
                         cmd += libspec
                         cmd += ' -pthread'
+                        #cmd = cmd.replace("-ldl","-lrt -ldl")
+                        from os import environ
+                        if environ.get('IS_NOT_DOCKER') is not None:
+                            cmd += ' -D IS_NOT_DOCKER'
+                            
+                        if environ.get('GPERF') is not None:
+                            cmd += ' -lprofiler -ltcmalloc' # CPU profiler
                     print cmd
+                    # else:
+                    #     if target.get() in ['gen','test']:
+                    #         if 'Z3DIR' in os.environ:
+                    #             paths = '-I $Z3DIR/include -L $Z3DIR/lib -Wl,-rpath=$Z3DIR/lib' 
+                    #         else:
+                    #             _dir = os.path.dirname(os.path.abspath(__file__))
+                    #             paths = ' -I {} -L {} -Wl,-rpath={}'.format(os.path.join(_dir,'include'),os.path.join(_dir,'lib'),os.path.join(_dir,'lib')) # -static
+                    #     else:
+                    #         paths = ''
+                    #     for lib in libs:
+                    #         _dir = lib[1]
+                    #         _libdir = lib[2] if len(lib) >= 3 else (_dir  + '/lib')
+                    #         paths += ' -I {}/include -L {} -Wl,-rpath={}'.format(_dir,_libdir,_libdir)
+                    #     if emit_main:
+                    #         cmd = "g++ {} {} -g -o {} {}.cpp".format(gpp11_spec,paths,basename,basename)
+                    #     else:
+                    #         cmd = "g++ {} {} -g -c {}.cpp".format(gpp11_spec,paths,basename) # -static -lrt 
+                    #     if target.get() in ['gen','test']:
+                    #         cmd = cmd + ' -lz3'
+                    #     cmd += libspec
+                    #     cmd += ' -pthread'
+                    #     cmd = cmd.replace("-ldl","-lrt -ldl")
+                    #     from os import environ
+                    #     if environ.get('IS_NOT_DOCKER') is not None:
+                    #         cmd += ' -D IS_NOT_DOCKER'
+                            
+                    #     if environ.get('GPERF') is not None:
+                    #         cmd += ' -lprofiler -ltcmalloc' # CPU profiler
+                    # print cmd
                     sys.stdout.flush()
                     with iu.WorkingDir(builddir):
                         status = os.system(cmd)

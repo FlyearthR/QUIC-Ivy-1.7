@@ -1,4 +1,4 @@
-#lang ivy
+#lang ivy1.8
 
 # This is an implementation of the generic TLS interface based on the gnutls library.
 # The parameters are:
@@ -226,7 +226,7 @@ module tls_gnutls(cid,index,bytes,extens,exten_ser,lower,upper) = {
 
         gnutls_session_t session;
         if (gnutls_init (& session, (is_server ? GNUTLS_SERVER : GNUTLS_CLIENT) | GNUTLS_NONBLOCK) != GNUTLS_E_SUCCESS) {
-            std::cout << "gnutls_init failed\n";
+            std::cerr << "gnutls_init failed\n";
             exit(1);
         }
         gnutls_connection *s = new gnutls_connection(c,session,*`cb`);
@@ -349,11 +349,11 @@ module tls_gnutls(cid,index,bytes,extens,exten_ser,lower,upper) = {
 
     implement lower.recv(c:cid,data:bytes) {
         <<< impure
-	gnutls_connection *s = `cid_map`[c];
+	    gnutls_connection *s = `cid_map`[c];
         std::vector<char> &input = s->input;
-	for (unsigned i = 0; i < data.size(); i++) {
-	    input.push_back(data[i]);
-	}
+        for (unsigned i = 0; i < data.size(); i++) {
+            input.push_back(data[i]);
+        }
         // Resume handshake if needed
         if (s->handshake_status == GNUTLS_E_AGAIN) {
             gnutls_do_handshake(s);

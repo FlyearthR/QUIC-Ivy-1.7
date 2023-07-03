@@ -19,7 +19,11 @@ module binary_input_file(data,cont) = {
         }
 
         after read {
-            ensure d = contents
+            ensure d = contents;
+            # <<<
+            # std::cerr << d << std::endl;
+            # //std::cerr << contents << std::endl;
+            # >>>
         }
 
         before sync {
@@ -32,6 +36,7 @@ module binary_input_file(data,cont) = {
             pending(c) := false;
         }
     }
+
     implementation {
         object fildes = {}
         <<< member
@@ -46,10 +51,10 @@ module binary_input_file(data,cont) = {
         if(session_file != NULL) {
             std::cerr << "PROOTPATH 5b " << session_file<< "\n";
             pathname2 += session_file;
-            pathname2 += "/QUIC-Ivy/doc/examples/quic/quic_utils/";
+            pathname2 += "/QUIC-Ivy-Attacker/doc/examples/quic/quic_utils/";
             pathname = pathname2 + pathname;
         } else {
-            pathname = "/usr/local/lib/python2.7/dist-packages/ivy/include/1.7/" + pathname; //TODO fix, for namespace, else bug
+            pathname = "/usr/local/lib/python2.7/dist-packages/ms_ivy-1.8.24-py2.7.egg/ivy/include/1.7/" + pathname; //TODO fix, for namespace, else bug
         }
         std::cerr << pathname << std::endl;
 		int f = ::open(pathname.c_str(),O_RDWR,0666);
@@ -58,10 +63,12 @@ module binary_input_file(data,cont) = {
 		}
 		`fildes` = f;
         std::cerr << `fildes` << std::endl;
+        
 	    }
         >>>
         implement write {
-        <<<
+        <<< 
+            std::cerr << "SWAG" << std::endl;
             std::cerr << `fildes` << std::endl;
             if (::lseek(`fildes`,0,SEEK_SET) < 0) {
                 perror("cannot seek to beginning of file");
@@ -78,20 +85,24 @@ module binary_input_file(data,cont) = {
         >>>
         }
         implement read {
-        <<<
+        <<< 
+            std::cerr << "COUCOU" << std::endl;
             if (::lseek(`fildes`,0,SEEK_SET) < 0) {
                 perror("cannot seek to beginning of file");
             }
             std::vector<char> buf;
             ivy_socket_deser_128 ds(`fildes`,buf);  // initializer deserializer with zero bytes
-            //ivy_socket_deser ds(`fildes`,buf);  // initializer deserializer with zero bytes
+            //ivy_socket_deser ds(`fildes`,buf);    // initializer deserializer with zero bytes
             while (ds.more(1)) {
                 //long long res;
                 int128_t res;
                 ds.getn(res,1);
                 d.push_back(res);
+                std::cerr << d << std::endl;
+                //std::cerr << contents << std::endl;
             }  // read all the bytes
-            
+            std::cerr << d << std::endl;
+            //std::cerr << contents << std::endl;
         >>>
         }
         <<< impl

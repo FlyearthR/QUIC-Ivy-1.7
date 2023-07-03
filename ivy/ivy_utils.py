@@ -588,7 +588,7 @@ def get_numeric_version():
 
 def version_le(v1,v2):
     return string_version_to_numeric_version(v1) <= string_version_to_numeric_version(v2)
-
+ 
 inc_dir_pat = re.compile(r'[0-9]*\.[0-9]*')
 
 def get_std_include_dir():

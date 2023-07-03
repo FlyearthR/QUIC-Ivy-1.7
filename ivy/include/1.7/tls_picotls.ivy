@@ -1565,6 +1565,7 @@ module tls_gnutls(cid,index,bytes,extens,hextens,exten_ser,lower,upper) = {
         }
         else sz = pn_enc->algo->iv_size;
         std::cerr << "iv_size end " << sz << "\n";
+        return sz;
         >>>
     }
 
@@ -1586,6 +1587,7 @@ module tls_gnutls(cid,index,bytes,extens,hextens,exten_ser,lower,upper) = {
 	    if(pn_enc != 0)
         	encrypt_symm(pn_enc,clear,iv,cipher);
         std::cerr << "encrypt_cipher end " << cipher << "\n";
+        return cipher;
         >>>
     }
 
@@ -2041,6 +2043,7 @@ module tls_gnutls(cid,index,bytes,extens,hextens,exten_ser,lower,upper) = {
         cipher.resize(output.size());
         std::copy(output.begin(),output.end(),cipher.begin());
         std::cerr << "encrypt_aead finish " << "\n";
+        return cipher;
         >>>
     }
 

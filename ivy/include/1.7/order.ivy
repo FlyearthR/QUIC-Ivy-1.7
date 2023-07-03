@@ -12,8 +12,6 @@ module totally_ordered_with_zero(t) = {
 }
 
 module unbounded_sequence = {
-    
-    
     type this
     alias t = this
 
@@ -27,35 +25,35 @@ module unbounded_sequence = {
 
     object spec = {
 
-	property succ(X,Z) -> (X < Z & ~(X < Y & Y < Z))
+        property succ(X,Z) -> (X < Z & ~(X < Y & Y < Z))
 
-	instantiate totally_ordered_with_zero(t)
+        instantiate totally_ordered_with_zero(t)
 
-	after next {
-	    assert x < y & (x < Y -> y <= Y);
-	    assert succ(x,y)
-	}
-	before prev {
-	    assert 0 < x
-	}
-	after prev {
-	    assert y < x & (Y < x -> Y <= y);
-	    assert succ(y,x)
-	}
+        after next {
+            assert x < y & (x < Y -> y <= Y);
+            assert succ(x,y)
+        }
+        before prev {
+            assert 0 < x
+        }
+        after prev {
+            assert y < x & (Y < x -> Y <= y);
+            assert succ(y,x)
+        }
     }
 
     object impl = {
 
-	interpret t -> nat
+        interpret t -> nat
 
-	definition succ(X,Y) = (Y = X + 1)
+        definition succ(X,Y) = (Y = X + 1)
 
-	implement next {
-	    y := x + 1
-	}
-	implement prev {
-	    y := x - 1
-	}
+        implement next {
+            y := x + 1
+        }
+        implement prev {
+            y := x - 1
+        }
     }
 
     isolate iso = impl,spec
@@ -67,8 +65,6 @@ module unbounded_sequence = {
 }
 
 module long_unbounded_sequence = {
-    
-    
     type this
     alias t = this
 
@@ -81,37 +77,36 @@ module long_unbounded_sequence = {
     relation succ(X:t,Y:t)
 
     object spec = {
+        property succ(X,Z) -> (X < Z & ~(X < Y & Y < Z))
 
-	property succ(X,Z) -> (X < Z & ~(X < Y & Y < Z))
+        instantiate totally_ordered_with_zero(t)
 
-	instantiate totally_ordered_with_zero(t)
-
-	after next {
-	    assert x < y & (x < Y -> y <= Y);
-	    assert succ(x,y)
-	}
-	before prev {
-	    assert 0 < x
-	}
-	after prev {
-	    assert y < x & (Y < x -> Y <= y);
-	    assert succ(y,x)
-	}
+        after next {
+            assert x < y & (x < Y -> y <= Y);
+            assert succ(x,y)
+        }
+        before prev {
+            assert 0 < x
+        }
+        after prev {
+            assert y < x & (Y < x -> Y <= y);
+            assert succ(y,x)
+        }
     }
 
     object impl = {
 
-	interpret t -> longbv[1][13][16]
+        interpret t -> longbv[1][13][16]
 
 
-	definition succ(X,Y) = (Y = X + 1)
+        definition succ(X,Y) = (Y = X + 1)
 
-	implement next {
-	    y := x + 1
-	}
-	implement prev {
-	    y := x - 1
-	}
+        implement next {
+            y := x + 1
+        }
+        implement prev {
+            y := x - 1
+        }
     }
 
     isolate iso = impl,spec

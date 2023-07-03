@@ -221,7 +221,7 @@ z3::expr __to_solver<CLASSNAME>( gen &g, const  z3::expr &v, CLASSNAME &val) {
     return v == g.int_to_z3(v.get_sort(),CLASSNAME::x_to_bv(val));
 }
 template <>
-void __randomize<CLASSNAME>( gen &g, const  z3::expr &apply_expr) {
+void __randomize<CLASSNAME>( gen &g, const  z3::expr &apply_expr, const std::string &sort_name) {
     z3::sort range = apply_expr.get_sort();
     CLASSNAME value;
     if (CLASSNAME::bv_to_x_hash.size() == (1<<BITS)) {
@@ -312,7 +312,7 @@ class IntBV(XBV):
     def __init__(self,classname,loval,hival,bits):
         """ bits is the number of bits in the bit vector representation """
         add_once_global("""
-    struct IntClass {
+    struct IntClass { 
         IntClass() : val(0) {}
         IntClass(long long val) : val(val) {}
         long long val;
