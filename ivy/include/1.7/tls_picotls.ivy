@@ -419,10 +419,10 @@ module tls_gnutls(cid,index,bytes,extens,exten_ser,lower,upper) = {
 
         if (is_server) {
             /* Read the certificate file */
-            if (ptls_load_certificates(ctx, "leaf_cert.pem") != 0) {
+            if (ptls_load_certificates(ctx, "/tmp/QUIC-FormalVerification/QUIC-Ivy/doc/examples/quic/leaf_cert.pem") != 0) {
                  std::cerr << "could not load certificate file leaf_cert.pem\n";
                  exit(1);
-            } else if(set_sign_certificate_from_key_file("leaf_cert.key", ctx)) {
+            } else if(set_sign_certificate_from_key_file("/tmp/QUIC-FormalVerification/QUIC-Ivy/doc/examples/quic/leaf_cert.key", ctx)) {
                 std::cerr << "could not load key file leaf_cert.key\n";
                 exit(1);
             }
